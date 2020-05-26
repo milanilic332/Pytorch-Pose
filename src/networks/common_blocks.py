@@ -6,30 +6,26 @@ class VGGHead(nn.Module):
     def __init__(self):
         super(VGGHead, self).__init__()
 
-        self.maxpool = nn.MaxPool2d(2, 2)
+        self.maxpool = nn.MaxPool2d(2, 2).cuda()
 
-        self.conv_0_0 = nn.Conv2d(3, 32, 3, padding=1)
-        self.conv_0_1 = nn.Conv2d(32, 32, 3, padding=1)
-        self.conv_0_2 = nn.Conv2d(32, 64, 3, padding=1)
-        self.conv_0_3 = nn.Conv2d(64, 64, 3, padding=1)
+        self.rb_0_0 = ResBlock(3, 32).cuda()
+        self.rb_0_1 = ResBlock(32, 32).cuda()
 
-        self.conv_1_0 = nn.Conv2d(64, 64, 3, padding=1)
-        self.conv_1_1 = nn.Conv2d(64, 64, 3, padding=1)
+        self.rb_1_0 = ResBlock(32, 48).cuda()
+        self.rb_1_1 = ResBlock(48, 48).cuda()
 
-        self.conv_2_0 = nn.Conv2d(64, 128, 3, padding=1)
-        self.conv_2_1 = nn.Conv2d(128, 128, 3, padding=1)
+        self.rb_2_0 = ResBlock(48, 64).cuda()
+        self.rb_2_1 = ResBlock(64, 64).cuda()
 
     def forward(self, x):
-        x = F.relu(self.conv_0_0(x))
-        x = F.relu(self.conv_0_1(x))
-        x = F.relu(self.conv_0_2(x))
-        x = self.maxpool(F.relu(self.conv_0_3(x)))
+        x = self.rb_0_0.forward(x)
+        x = self.maxpool(self.rb_0_1.forward(x))
 
-        x = F.relu(self.conv_1_0(x))
-        x = self.maxpool(F.relu(self.conv_1_1(x)))
+        x = self.rb_1_0.forward(x)
+        x = self.maxpool(self.rb_1_1.forward(x))
 
-        x = F.relu(self.conv_2_0(x))
-        x = self.maxpool(F.relu(self.conv_2_1(x)))
+        x = self.rb_2_0.forward(x)
+        x = self.rb_2_1.forward(x)
 
         return x
 
@@ -38,11 +34,11 @@ class ResBlock(nn.Module):
     def __init__(self, inc, outc):
         super(ResBlock, self).__init__()
 
-        self.conv_skip = nn.Conv2d(inc, outc, 1)
+        self.conv_skip = nn.Conv2d(inc, outc, 1).cuda()
 
-        self.conv_res_0 = nn.Conv2d(inc, outc // 2, 1)
-        self.conv_res_1 = nn.Conv2d(inc, outc // 2, 3, padding=1)
-        self.conv_res_2 = nn.Conv2d(inc, outc, 1)
+        self.conv_res_0 = nn.Conv2d(inc, outc // 2, 1).cuda()
+        self.conv_res_1 = nn.Conv2d(outc // 2, outc // 2, 3, padding=1).cuda()
+        self.conv_res_2 = nn.Conv2d(outc // 2, outc, 1).cuda()
 
     def forward(self, x):
         skip = F.relu(self.conv_skip(x))
@@ -60,9 +56,9 @@ class ResBlockX3(nn.Module):
     def __init__(self, inc, outc):
         super(ResBlockX3, self).__init__()
 
-        self.res_block_0 = ResBlock(inc, outc)
-        self.res_block_1 = ResBlock(inc, outc)
-        self.res_block_2 = ResBlock(inc, outc)
+        self.res_block_0 = ResBlock(inc, outc).cuda()
+        self.res_block_1 = ResBlock(outc, outc).cuda()
+        self.res_block_2 = ResBlock(outc, outc).cuda()
 
     def forward(self, x):
         x = self.res_block_0.forward(x)
@@ -72,34 +68,41 @@ class ResBlockX3(nn.Module):
         return x
 
 
-class HourglassBlock(nn.Module):
-    def __init__(self, inc, depth=3):
-        super(HourglassBlock, self).__init__()
+class HourglassModule(nn.Module):
+    def __init__(self, inc, outc, pools):
+        super(HourglassModule, self).__init__()
 
-        self.depth = depth
-        self.maxpool = nn.MaxPool2d(2, 2)
-        self.upsample = nn.Upsample(scale_factor=2)
+        self.pools = pools
 
-        self.blocks_down = [ResBlockX3(inc * 2 ** d, inc * 2 ** d) for d in range(depth)]
-        self.skips = [ResBlockX3(inc * 2 ** d, inc * 2 ** d) for d in range(depth)]
-        self.blocks_up = [ResBlockX3(inc * 2 ** (depth - d - 1), inc * 2 ** (depth - d - 1)) for d in range(depth)]
+        self.preprocess = ResBlock(inc, outc).cuda()
 
-        self.bottleneck = ResBlockX3(inc * 2 ** depth, inc * 2 ** depth)
+        self.downs = nn.ModuleList([ResBlockX3(inc, outc).cuda() for _ in range(self.pools)])
+        self.maxpool = nn.MaxPool2d(2).cuda()
+        self.skips = nn.ModuleList([ResBlockX3(inc, outc).cuda() for _ in range(self.pools)])
+        self.upsample = nn.Upsample(scale_factor=2).cuda()
+        self.ups = nn.ModuleList([ResBlockX3(inc, outc).cuda() for _ in range(self.pools)])
+        self.bottleneck = ResBlockX3(inc, outc).cuda()
+
+        self.postprocess = ResBlock(inc, outc).cuda()
 
     def forward(self, x):
-        current_in = x
+        x = self.preprocess.forward(x)
+
         skips = []
-        for i in range(self.depth):
-            current_in = self.blocks_down[i].forward(current_in)
-            skips.append(self.skips[i].forward(current_in))
-            current_in = self.maxpool(current_in)
+        for d in range(self.pools):
+            x = self.maxpool(x)
+            skips.append(self.skips[d].forward(x))
+            x = self.downs[d].forward(x)
 
-        bottleneck = self.bottleneck.forward(current_in)
+        x = self.bottleneck.forward(x)
 
-        current_in = bottleneck
-        for i in range(self.depth):
-            current_in = self.upsample(current_in)
-            current_in = skips[self.depth - i - 1] + current_in
-            current_in = self.blocks_up[i].forward(current_in)
+        for d in range(self.pools):
+            x = x + skips[self.pools - d - 1]
+            x = self.ups[d].forward(x)
+            x = self.upsample(x)
 
-        return current_in
+        x = self.postprocess.forward(x)
+
+        return x
+
+

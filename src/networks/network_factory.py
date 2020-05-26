@@ -1,5 +1,6 @@
 import inspect
 
+from src.networks.resnet_kp import ResNetKP
 from src.networks.hourglass_v1 import HourglassV1
 
 
@@ -13,9 +14,9 @@ def build_network(config):
     args = [f'{param}={network_cfg[param]}' for param in network_params if network_cfg.get(param)]
 
     try:
-        model = eval('{}({})'.format(network_name, *args))
+        model = eval('{}({})'.format(network_name, ', '.join(args)))
     except:
         raise ValueError('Can\'t load network.')
 
-    return model
+    return model.cuda()
 
