@@ -1,51 +1,48 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from src.networks.common_blocks import VGGHead, ResBlockX3, HourglassBlock
+from src.networks.common_blocks import VGGHead, ResBlockX3, HourglassModule
 
 
 class HourglassV1(nn.Module):
-    def __init__(self, hourglass_channels, paf_outputs=10, class_outputs=9):
+    def __init__(self, paf_joints, keypoint_points, stages=3):
         super(HourglassV1, self).__init__()
 
-        self.vgg = VGGHead()
+        self.stages = stages
 
-        self.hourglass_paf_prep = nn.Conv2d(128, hourglass_channels, 1)
+        self.vgg = VGGHead().cuda()
 
-        self.hourglass_paf_0 = HourglassBlock(32)
-        self.hourglass_paf_1 = HourglassBlock(32)
-        self.hourglass_paf_2 = HourglassBlock(32)
+        self.pafs = nn.ModuleList([HourglassModule(64, 64, 3).cuda() for _ in range(self.stages)])
+        self.paf_prep_outs = nn.ModuleList([ResBlockX3(64, 32).cuda() for _ in range(self.stages)])
+        self.paf_outs = nn.ModuleList([nn.Conv2d(32, len(paf_joints), 3, padding=1).cuda() for _ in range(self.stages)])
 
-        self.paf_prep = ResBlockX3(32, 32)
-        self.paf_out = nn.Conv2d(32, paf_outputs, 3, padding=1)
+        self.class_prep = nn.Conv2d(128, 64, 1, padding=0).cuda()
 
-        self.hourglass_class_prep = nn.Conv2d(128, hourglass_channels, 1)
-
-        self.hourglass_class_0 = HourglassBlock(32)
-        self.hourglass_class_1 = HourglassBlock(32)
-        self.hourglass_class_2 = HourglassBlock(32)
-
-        self.class_prep = ResBlockX3(32, 32)
-        self.class_out = nn.Conv2d(32, class_outputs, 3, padding=1)
+        self.classes = nn.ModuleList([HourglassModule(64, 64, 3).cuda() for _ in range(self.stages)])
+        self.class_prep_outs = nn.ModuleList([ResBlockX3(64, 32).cuda() for _ in range(self.stages)])
+        self.class_outs = nn.ModuleList([nn.Conv2d(32, len(keypoint_points), 3, padding=1).cuda() for _ in range(self.stages)])
 
     def forward(self, x):
         vgg = self.vgg.forward(x)
+        x = vgg
 
-        hp = F.relu(self.hourglass_paf_prep(x))
-        hp = self.hourglass_paf_0.forward(hp)
-        hp = self.hourglass_paf_1.forward(hp)
-        hp = self.hourglass_paf_2.forward(hp)
-        hpo = self.paf_prep.forward(hp)
-        hpo = F.relu(self.paf_out(hpo))
+        pos = []
+        for s in range(self.stages):
+            x = self.pafs[s].forward(x)
+            pos.append(torch.sigmoid(self.paf_outs[s](self.paf_prep_outs[s].forward(x))))
 
-        class_in = torch.cat((vgg, hp), 0)
+            if s != self.stages - 1:
+                x = vgg + x
 
-        hc = F.relu(self.hourglass_class_prep(class_in))
-        hc = self.hourglass_class_0.forward(hc)
-        hc = self.hourglass_class_1.forward(hc)
-        hc = self.hourglass_class_2.forward(hc)
-        hco = self.class_prep.forward(hc)
-        hco = F.relu(self.class_out(hco))
+        class_input = torch.relu(self.class_prep(torch.cat((vgg, x), 1)))
+        x = class_input
 
-        return hpo, hco
+        cos = []
+        for s in range(self.stages):
+            x = self.classes[s].forward(x)
+            cos.append(torch.sigmoid(self.class_outs[s](self.class_prep_outs[s].forward(x))))
+
+            if s != self.stages - 1:
+                x = class_input + x
+
+        return pos, cos
