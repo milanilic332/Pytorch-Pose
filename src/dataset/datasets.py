@@ -14,7 +14,7 @@ from src.dataset.augmentations import get_augmentations
 
 
 class PoseDataset(Dataset):
-    def __init__(self, type, dataset_root, pafmap_joints, keypoint_points,
+    def __init__(self, type, dataset_root, pafmap_joints, keypoints,
                  input_shape=(288, 512, 3), augment=False, downscale=4):
         self.type = type
         self.dataset_root = dataset_root
@@ -24,8 +24,10 @@ class PoseDataset(Dataset):
         if self.augment:
             self.seq = get_augmentations()
 
-        self.pafmap_joints = pafmap_joints
-        self.keypoints_points = keypoint_points
+        self.coco_pafmap_joints = pafmap_joints[0]
+        self.coco_keypoints = keypoints[0]
+        self.mpii_pafmap_joints = pafmap_joints[1]
+        self.mpii_keypoints = keypoints[1]
 
         self.downscale = downscale
         
@@ -35,23 +37,22 @@ class PoseDataset(Dataset):
 
     def load_coco_ann_files(self):
         if self.type == 'train':
-            datasets = [(os.path.join(self.dataset_root, 'train2014'),
-                         COCO(os.path.join(self.dataset_root,
-                                           'annotations_trainval2014',
-                                           'person_keypoints_train2014.json'))),
-                        (os.path.join(self.dataset_root, 'train2017'),
-                         COCO(os.path.join(self.dataset_root,
-                                           'annotations_trainval2017',
-                                           'person_keypoints_train2017.json')))]
+            datasets = [(os.path.join(self.dataset_root, 'coco', 'train2014'),
+                         COCO(os.path.join(self.dataset_root, 'coco',
+                                           'annotations_trainval2014', 'person_keypoints_train2014.json'))),
+                        (os.path.join(self.dataset_root, 'coco', 'train2017'),
+                         COCO(os.path.join(self.dataset_root, 'coco',
+                                           'annotations_trainval2017', 'person_keypoints_train2017.json'))),
+                        (os.path.join(self.dataset_root, 'mpii', 'images'),
+                         COCO(os.path.join(self.dataset_root, 'mpii',
+                                           'annotations', 'train.json')))]
         else:
-            datasets = [(os.path.join(self.dataset_root, 'val2014'),
-                         COCO(os.path.join(self.dataset_root,
-                                           'annotations_trainval2014',
-                                           'person_keypoints_val2014.json'))),
-                        (os.path.join(self.dataset_root, 'val2017'),
-                         COCO(os.path.join(self.dataset_root,
-                                           'annotations_trainval2017',
-                                           'person_keypoints_val2017.json')))]
+            datasets = [(os.path.join(self.dataset_root, 'coco', 'val2014'),
+                         COCO(os.path.join(self.dataset_root, 'coco',
+                                           'annotations_trainval2014', 'person_keypoints_val2014.json'))),
+                        (os.path.join(self.dataset_root, 'coco', 'val2017'),
+                         COCO(os.path.join(self.dataset_root, 'coco',
+                                           'annotations_trainval2017', 'person_keypoints_val2017.json')))]
 
         dict_list = []
         for dataset_path, dataset in datasets:
@@ -64,8 +65,9 @@ class PoseDataset(Dataset):
                     anns = dataset.loadAnns(ann_ids)
 
                     if [ann['keypoints'] for ann in anns] and not all([ann['keypoints'] == [0]*51 for ann in anns]):
-                        dict_list.append({'path': os.path.join(dataset_path, img["file_name"]),
-                                          'keypoints': [ann['keypoints'] for ann in anns]})
+                        if len([ann['keypoints'] for ann in anns if ann['keypoints'] != [0]*51]) <= 4:
+                            dict_list.append({'path': os.path.join(dataset_path, img["file_name"]),
+                                              'keypoints': [ann['keypoints'] for ann in anns if ann['keypoints'] != [0]*51]})
                 except:
                     print(f'Skipped: {idx}')
 
@@ -73,32 +75,40 @@ class PoseDataset(Dataset):
 
         return final_dataset
 
-    def apply_keypoint_mask(self, img_keypoints, input_shape, kp_size=30):
-        keypoint_masks = [np.zeros((input_shape[0] + kp_size, input_shape[1] + kp_size, 1), dtype=np.float32)
-                          for _ in range(len(self.keypoints_points))]
+    def apply_keypoint_mask(self, img_keypoints, input_shape, keypoints, kp_size=32):
+        keypoint_masks = [np.zeros((self.input_shape[0] + kp_size, self.input_shape[1] + kp_size, 1), dtype=np.float32)
+                          for _ in range(len(keypoints))]
 
         for kp in img_keypoints:
-            for i, k in enumerate(self.keypoints_points):
-
+            for i, k in enumerate(keypoints):
+                x = int(np.round(kp[k * 3] / input_shape[1] * self.input_shape[1]))
+                y = int(np.round(kp[k * 3 + 1] / input_shape[0] * self.input_shape[0]))
                 if kp[k * 3 + 2] != 0:
-                    keypoint_masks[i][kp[k * 3 + 1]:kp[k * 3 + 1] + kp_size, kp[k * 3]:kp[k * 3] + kp_size, 0] = \
-                        np.maximum(keypoint_masks[i][kp[k * 3 + 1]:kp[k * 3 + 1] + kp_size, kp[k * 3]:kp[k * 3] + kp_size, 0], self.keypoint_mask)
+                    try:
+                        keypoint_masks[i][y:y + kp_size, x:x + kp_size, 0] = \
+                            np.maximum(keypoint_masks[i][y:y + kp_size, x:x + kp_size, 0], self.keypoint_mask)
+                    except:
+                        pass
 
         keypoint_masks = keypoint_masks if np.max(keypoint_masks) < 0.5 else keypoint_masks / np.max(keypoint_masks)
 
         return np.squeeze(np.array(keypoint_masks)).transpose((1, 2, 0))[kp_size // 2:-kp_size // 2, kp_size // 2:-kp_size // 2, :]
 
-    def apply_segmap_mask(self, img_keypoints, input_shape, thickness=12):
-        seg_masks = [np.zeros((input_shape[0], input_shape[1], 1), dtype=np.float32)
-                    for _ in range(len(self.pafmap_joints))]
+    def apply_segmap_mask(self, img_keypoints, input_shape, pafmap_joints, thickness=10):
+        seg_masks = [np.zeros((self.input_shape[0], self.input_shape[1], 1), dtype=np.float32)
+                    for _ in range(len(pafmap_joints))]
 
         for kp in img_keypoints:
-            for i, (kp0, kp1) in enumerate(self.pafmap_joints):
+            for i, (kp0, kp1) in enumerate(pafmap_joints):
+                x1 = int(np.round(kp[kp0 * 3] / input_shape[1] * self.input_shape[1]))
+                y1 = int(np.round(kp[kp0 * 3 + 1] / input_shape[0] * self.input_shape[0]))
+                x2 = int(np.round(kp[kp1 * 3] / input_shape[1] * self.input_shape[1]))
+                y2 = int(np.round(kp[kp1 * 3 + 1] / input_shape[0] * self.input_shape[0]))
 
                 if kp[kp0 * 3 + 2] != 0 and kp[kp1 * 3 + 2] != 0:
                     cv2.line(seg_masks[i],
-                             (kp[kp0 * 3], kp[kp0 * 3 + 1]),
-                             (kp[kp1 * 3], kp[kp1 * 3 + 1]),
+                             (x1, y1),
+                             (x2, y2),
                              255,
                              thickness)
 
@@ -117,13 +127,13 @@ class PoseDataset(Dataset):
         img = cv2.imread(row['path'])
         img_keypoints = row['keypoints']
 
-        pafmap_mask = self.apply_segmap_mask(img_keypoints, img.shape)
+        pafmap_mask = self.apply_segmap_mask(img_keypoints, img.shape,
+                                             self.coco_pafmap_joints if 'coco' in row['path'] else self.mpii_pafmap_joints)
 
-        keypoint_mask = self.apply_keypoint_mask(img_keypoints, img.shape)
+        keypoint_mask = self.apply_keypoint_mask(img_keypoints, img.shape,
+                                                 self.coco_keypoints if 'coco' in row['path'] else self.mpii_keypoints)
 
         img = cv2.resize(img, (self.input_shape[1], self.input_shape[0]))
-        pafmap_mask = cv2.resize(pafmap_mask, (self.input_shape[1], self.input_shape[0]))
-        keypoint_mask = cv2.resize(keypoint_mask, (self.input_shape[1], self.input_shape[0]))
 
         if self.augment:
             seq_det = self.seq.to_deterministic()

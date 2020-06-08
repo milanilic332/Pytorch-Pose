@@ -2,7 +2,7 @@ import numpy as np
 from scipy.stats import multivariate_normal
 
 
-def get_keypoint_mask(kp_size=30, s=0.25):
+def get_keypoint_mask(kp_size=32, s=0.2):
     x, y = np.mgrid[0:1:(kp_size * 1j), 0:1:(kp_size * 1j)]
     xy = np.column_stack([x.flat, y.flat])
 

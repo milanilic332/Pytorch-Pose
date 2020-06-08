@@ -23,11 +23,12 @@ class Trainer:
         self.kp_loss_multiplier = config['loss'].getfloat('class_loss_multiplier')
         self.deep_supervion_decay = config['loss'].getfloat('deep_supervison_decay')
 
-        self.model = build_network(config)
+        self.model = build_network(config).cuda()
         if config['network'].getboolean('load'):
             self.model.load_state_dict(torch.load(config['network']['path']))
 
         self.optimizer = build_optimizer(self.model.parameters(), config)
+#        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', factor=0.9, patience=1, min_lr=1e-6)
 
         self.paf_loss, self.kp_loss = build_losses(config)
 
@@ -56,28 +57,31 @@ class Trainer:
             for imgs, pafs, kps in tqdm(self.train_dataloader, total=self.train_steps, desc=f'[TRAIN] Epoch {epoch}'):
                 imgs, pafs, kps = imgs.cuda(), pafs.cuda(), kps.cuda()
 
-                self.optimizer.zero_grad()
+                if not (global_step_c % 4):
+                    self.optimizer.zero_grad()
 
                 o1, o2 = self.model(imgs.float())
 
                 loss_paf, loss_kp, loss_total = self.get_loss(pafs, kps, o1, o2)
 
                 loss_total.backward()
-                self.optimizer.step()
 
                 train_paf_loss.append(loss_paf.item())
                 train_kp_loss.append(loss_kp.item())
                 train_loss.append(loss_total.item())
 
+                if global_step_c % 4 == 3:
+                    self.optimizer.step()
+
                 if not (global_step_c % 1000):
-                    img = imgs[0].cpu().detach().numpy().transpose((1, 2, 0))
+                    img = cv2.cvtColor(imgs[0].cpu().detach().numpy().transpose((1, 2, 0)).astype(np.float32), cv2.COLOR_BGR2RGB)
                     paf_gt = np.max(cv2.resize(pafs[0].cpu().detach().numpy().transpose((1, 2, 0)),
                                                (self.input_shape[1], self.input_shape[0])), axis=2)
-                    paf_pred = np.max(cv2.resize(o1[2][0].cpu().detach().numpy().transpose((1, 2, 0)),
+                    paf_pred = np.max(cv2.resize(o1[4][0].cpu().detach().numpy().transpose((1, 2, 0)),
                                                  (self.input_shape[1], self.input_shape[0])), axis=2)
                     kp_gt = np.max(cv2.resize(kps[0].cpu().detach().numpy().transpose((1, 2, 0)),
                                               (self.input_shape[1], self.input_shape[0])), axis=2)
-                    kp_pred = np.max(cv2.resize(o2[2][0].cpu().detach().numpy().transpose((1, 2, 0)),
+                    kp_pred = np.max(cv2.resize(o2[4][0].cpu().detach().numpy().transpose((1, 2, 0)),
                                                 (self.input_shape[1], self.input_shape[0])), axis=2)
 
                     self.writer.add_image('Train/image', img, global_step_c, dataformats='HWC')
@@ -115,7 +119,9 @@ class Trainer:
                 self.writer.add_scalar('Loss/val/epoch_kp', np.mean(val_kp_loss), epoch)
                 self.writer.add_scalar('Loss/val/epoch_loss', np.mean(val_loss), epoch)
 
-                torch.save(self.model.state_dict(), f'../saved/models/{self.config["network"]["name"]}_{epoch}.pth')
+                torch.save(self.model.state_dict(), f'../saved/models/{self.config["network"]["name"]}_{epoch}_ft.pth')
+
+ #               self.scheduler.step(np.mean(val_loss))
 
         print('Finished Training')
 
