@@ -1,0 +1,3 @@
+# Don't penalize missing keypoints
+# Create real PAFs
+# Create mid shoulder point and connect to head
