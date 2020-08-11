@@ -14,7 +14,7 @@ class HourglassV1(nn.Module):
 
         self.paf_preps = nn.ModuleList([ResBlock(128, 64).cuda() for _ in range(self.stages)])
         self.pafs = nn.ModuleList([HourglassModule(64, 64, 3).cuda() for _ in range(self.stages)])
-        self.paf_outs = nn.ModuleList([nn.Conv2d(64, n_pafs, 3, padding=1).cuda() for _ in range(self.stages)])
+        self.paf_outs = nn.ModuleList([nn.Conv2d(64, n_pafs * 2, 3, padding=1).cuda() for _ in range(self.stages)])
 
         self.class_ins = ResBlock(128, 64).cuda()
 
@@ -29,7 +29,7 @@ class HourglassV1(nn.Module):
         pos = []
         for s in range(self.stages):
             x = self.pafs[s].forward(x)
-            pos.append(torch.sigmoid(self.paf_outs[s](x)))
+            pos.append(self.paf_outs[s](x))
 
             if s != self.stages - 1:
                 x = torch.cat((vgg, x), 1)

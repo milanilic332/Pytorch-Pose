@@ -28,7 +28,7 @@ class Trainer:
             self.model.load_state_dict(torch.load(config['network']['path']))
 
         self.optimizer = build_optimizer(self.model.parameters(), config)
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.75, patience=1, min_lr=1e-6, verbose=True)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.9, patience=1, min_lr=5e-5, verbose=True)
 
         self.paf_loss, self.kp_loss = build_losses(config)
 
@@ -40,11 +40,13 @@ class Trainer:
         self.writer = SummaryWriter(log_dir='../saved/logs/')
 
     def get_loss(self, pafs, kps, o1, o2, n_pafs, n_kps):
-        loss_paf = sum([sum([sum(self.deep_supervion_decay**i * self.paf_loss_multiplier * (n_pafs[:, n].float() + 1) * self.paf_loss(o.float(), pafs.float())) for n in range(n_pafs.shape[1])])
-                             for i, o in enumerate(o1[::-1])])
+        n_pafs = n_pafs.repeat_interleave(2, dim=1)
 
-        loss_kp = sum([sum([sum(self.deep_supervion_decay**i * self.kp_loss_multiplier * (n_kps[:, n].float() + 1) * self.kp_loss(o.float(), kps.float())) for n in range(n_kps.shape[1])])
-                            for i, o in enumerate(o2[::-1])])
+        loss_paf = sum([sum([sum(self.deep_supervion_decay**i * self.paf_loss_multiplier * (n_pafs[:, n].float() + 0.1) *
+                                 self.paf_loss(o[:, n, :, :].float(), pafs[:, n, :, :].float())) for n in range(n_pafs.shape[1])]) for i, o in enumerate(o1[::-1])])
+
+        loss_kp = sum([sum([sum(self.deep_supervion_decay**i * self.kp_loss_multiplier * (n_kps[:, n].float() + 0.1) *
+                                self.kp_loss(o[:, n, :, :].float(), kps[:, n, :, :].float())) for n in range(n_kps.shape[1])]) for i, o in enumerate(o2[::-1])])
 
         loss_total = loss_paf + loss_kp
 
@@ -77,18 +79,27 @@ class Trainer:
 
                 if not (global_step_c % 1000):
                     img = cv2.cvtColor(imgs[0].cpu().detach().numpy().transpose((1, 2, 0)).astype(np.float32), cv2.COLOR_BGR2RGB)
-                    paf_gt = np.max(cv2.resize(pafs[0].cpu().detach().numpy().transpose((1, 2, 0)),
-                                               (self.input_shape[1], self.input_shape[0])), axis=2)
-                    paf_pred = np.max(cv2.resize(o1[4][0].cpu().detach().numpy().transpose((1, 2, 0)),
-                                                 (self.input_shape[1], self.input_shape[0])), axis=2)
+
+                    paf_gt_x = np.max(np.abs(cv2.resize(pafs[0].cpu().detach().numpy().transpose((1, 2, 0))[:, :, [i for i in range(0, 14, 2)]],
+                                                        (self.input_shape[1], self.input_shape[0]))), axis=-1)
+                    paf_gt_y = np.max(np.abs(cv2.resize(pafs[0].cpu().detach().numpy().transpose((1, 2, 0))[:, :, [i for i in range(1, 14, 2)]],
+                                                        (self.input_shape[1], self.input_shape[0]))), axis=-1)
+
+                    paf_pred_x = np.max(np.abs(cv2.resize(o1[4][0].cpu().detach().numpy().transpose((1, 2, 0))[:, :, [i for i in range(0, 14, 2)]],
+                                                          (self.input_shape[1], self.input_shape[0]))), axis=-1)
+                    paf_pred_y = np.max(np.abs(cv2.resize(o1[4][0].cpu().detach().numpy().transpose((1, 2, 0))[:, :, [i for i in range(1, 14, 2)]],
+                                                          (self.input_shape[1], self.input_shape[0]))), axis=-1)
+
                     kp_gt = np.max(cv2.resize(kps[0].cpu().detach().numpy().transpose((1, 2, 0)),
                                               (self.input_shape[1], self.input_shape[0])), axis=2)
                     kp_pred = np.max(cv2.resize(o2[4][0].cpu().detach().numpy().transpose((1, 2, 0)),
                                                 (self.input_shape[1], self.input_shape[0])), axis=2)
 
                     self.writer.add_image('Train/image', img, global_step_c, dataformats='HWC')
-                    self.writer.add_image('Train/paf_gt', paf_gt, global_step_c, dataformats='HW')
-                    self.writer.add_image('Train/paf_pred', paf_pred, global_step_c, dataformats='HW')
+                    self.writer.add_image('Train/paf_gt_x', paf_gt_x, global_step_c, dataformats='HW')
+                    self.writer.add_image('Train/paf_gt_y', paf_gt_y, global_step_c, dataformats='HW')
+                    self.writer.add_image('Train/paf_pred_x', paf_pred_x, global_step_c, dataformats='HW')
+                    self.writer.add_image('Train/paf_pred_y', paf_pred_y, global_step_c, dataformats='HW')
                     self.writer.add_image('Train/kp_gt', kp_gt, global_step_c, dataformats='HW')
                     self.writer.add_image('Train/kp_pred', kp_pred, global_step_c, dataformats='HW')
 
