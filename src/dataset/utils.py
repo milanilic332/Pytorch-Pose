@@ -3,6 +3,12 @@ from scipy.stats import multivariate_normal
 
 
 def get_keypoint_mask(kp_size=32, s=0.2):
+    """Creates a 2d Gaussian mask representing one keypoint
+
+    :param kp_size:     size of square containing gaussian (ex. 32x32)
+    :param s:           sigma - Gaussian noise
+    :return:            2d Gaussian mask
+    """
     x, y = np.mgrid[0:1:(kp_size * 1j), 0:1:(kp_size * 1j)]
     xy = np.column_stack([x.flat, y.flat])
 

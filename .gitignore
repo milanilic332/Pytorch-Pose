@@ -137,5 +137,14 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-data/coco
-data/mpii
+data/coco/
+data/mpii/
+data/test_videos/
+saved/logs/
+saved/models/
+
+!data/coco/.gitkeep
+!data/mpii/.gitkeep
+!data/test_videos/.gitkeep
+!saved/logs/.gitkeep
+!saved/models/.gitkeep

@@ -16,6 +16,16 @@ from src.dataset.augmentations import get_augmentations
 class PoseDataset(Dataset):
     def __init__(self, type, dataset_root, pafmap_joints, keypoints,
                  input_shape=(288, 512, 3), augment=False, downscale=4):
+        """Pytorch dataset class handling coco and mpii data
+
+        :param type:                'train' or 'validation'
+        :param dataset_root:        root path of datasets
+        :param pafmap_joints:       mapping list of joints
+        :param keypoints:           mapping list of keypoints
+        :param input_shape:         input shape of images
+        :param augment:             to augment or not
+        :param downscale:           downscale factor of output
+        """
         self.type = type
         self.dataset_root = dataset_root
         self.input_shape = input_shape
@@ -36,23 +46,31 @@ class PoseDataset(Dataset):
         self.dataset = self.load_coco_ann_files()
 
     def load_coco_ann_files(self):
+        """Loading COCO and MPII data
+
+        :return:            dataset as pd.DataFrame object
+        """
         if self.type == 'train':
-            datasets = [(os.path.join(self.dataset_root, 'coco', 'train2014'),
+            datasets = [
+                        (os.path.join(self.dataset_root, 'coco', 'train2014'),
                          COCO(os.path.join(self.dataset_root, 'coco',
                                            'annotations_trainval2014', 'person_keypoints_train2014.json'))),
                         (os.path.join(self.dataset_root, 'coco', 'train2017'),
                          COCO(os.path.join(self.dataset_root, 'coco',
                                            'annotations_trainval2017', 'person_keypoints_train2017.json'))),
-                        (os.path.join(self.dataset_root, 'mpii', 'images'),
-                         COCO(os.path.join(self.dataset_root, 'mpii',
-                                           'annotations', 'train.json')))]
+                        # (os.path.join(self.dataset_root, 'mpii', 'images'),
+                        #  COCO(os.path.join(self.dataset_root, 'mpii',
+                        #                    'annotations', 'train.json')))
+                       ]
         else:
-            datasets = [(os.path.join(self.dataset_root, 'coco', 'val2014'),
+            datasets = [
+                        (os.path.join(self.dataset_root, 'coco', 'val2014'),
                          COCO(os.path.join(self.dataset_root, 'coco',
                                            'annotations_trainval2014', 'person_keypoints_val2014.json'))),
                         (os.path.join(self.dataset_root, 'coco', 'val2017'),
                          COCO(os.path.join(self.dataset_root, 'coco',
-                                           'annotations_trainval2017', 'person_keypoints_val2017.json')))]
+                                           'annotations_trainval2017', 'person_keypoints_val2017.json')))
+                       ]
 
         dict_list = []
         for dataset_path, dataset in datasets:
@@ -85,6 +103,14 @@ class PoseDataset(Dataset):
         return final_dataset
 
     def apply_keypoint_mask(self, img_keypoints, input_shape, keypoints, kp_size=32):
+        """Create keypoint gt masks
+
+        :param img_keypoints:           keypoints from pandas dataset
+        :param input_shape:             input shape of images
+        :param keypoints:               keypoints mapping for coco or mpii
+        :param kp_size:                 size of kp 2d mask
+        :return:                        keypoint outputs, number of keypoints for each keypoint
+        """
         keypoint_masks = [np.zeros((self.input_shape[0] + kp_size, self.input_shape[1] + kp_size, 1), dtype=np.float32)
                           for _ in range(len(keypoints))]
         n_keypoints = [0 for _ in range(len(keypoints))]
@@ -106,6 +132,14 @@ class PoseDataset(Dataset):
         return np.squeeze(np.array(keypoint_masks)).transpose((1, 2, 0))[kp_size // 2:-kp_size // 2, kp_size // 2:-kp_size // 2, :], np.array(n_keypoints)
 
     def apply_pafmap_mask(self, img_keypoints, input_shape, pafmap_joints, thickness=8):
+        """Create pafs gt masks
+
+        :param img_keypoints:           keypoints from pandas dataset
+        :param input_shape:             input shape of images
+        :param pafmap_joints:           paf mapping for coco or mpii
+        :param thickness:               thickness of joint lines
+        :return:                        pafmap outputs, number of pafs for each joint
+        """
         paf_masks = [np.zeros((self.input_shape[0], self.input_shape[1], 1), dtype=np.float32)
                      for _ in range(len(pafmap_joints) * 2)]
         n_pafs = [0 for _ in range(len(pafmap_joints))]
@@ -140,6 +174,11 @@ class PoseDataset(Dataset):
         return np.squeeze(paf_masks).transpose((1, 2, 0)), np.array(n_pafs)
 
     def __getitem__(self, idx):
+        """Gets the next data
+
+        :param idx:             id of element inside the pandas dataset
+        :return:                input image, pafmap gt, keypoint gt, number of pafs, number of keypoints
+        """
         row = self.dataset.iloc[idx]
 
         img = cv2.imread(row['path'])
@@ -176,4 +215,8 @@ class PoseDataset(Dataset):
         return img, pafmap_mask, keypoint_mask, n_pafs, n_kps
 
     def __len__(self):
+        """Length of dataset getter
+
+        :return:        dataset length
+        """
         return self.dataset.shape[0]
