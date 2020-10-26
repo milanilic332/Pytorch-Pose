@@ -5,6 +5,11 @@ from src.networks.hourglass_v1 import HourglassV1
 
 
 def build_network(config):
+    """Builds a network from config file
+
+    :param config:          training config object
+    :return:                network
+    """
     network_cfg = config['network']
 
     network_name = network_cfg['name']
@@ -18,5 +23,4 @@ def build_network(config):
     except:
         raise ValueError('Can\'t load network.')
 
-    return model.cuda()
-
+    return model.to(device='cuda')

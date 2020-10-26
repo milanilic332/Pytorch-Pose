@@ -6,6 +6,11 @@ from src.dataset.datasets import PoseDataset
 
 
 def build_dataloaders(config):
+    """Creating dataloaders for train and val dataset used for training
+
+    :param config:      training config object
+    :return:            list of train dataloader and (val dataloader or None if it doesn't exist)
+    """
     train_dataset = PoseDataset(type='train',
                                 dataset_root=config['dataset']['root'],
                                 pafmap_joints=[literal_eval(config['network']['coco_paf_joints']),
@@ -15,11 +20,10 @@ def build_dataloaders(config):
                                 augment=config['default'].getboolean('augmentation'),
                                 downscale=config['default'].getint('downscale'))
 
-
     train_dataloader = DataLoader(dataset=train_dataset,
                                   batch_size=config['default'].getint('batch_size'),
                                   shuffle=True,
-                                  num_workers=16,
+                                  num_workers=config['default'].getint('preprocess_workers'),
                                   pin_memory=True)
 
     if config['default'].getboolean('validation'):
@@ -35,7 +39,7 @@ def build_dataloaders(config):
         val_dataloader = DataLoader(dataset=val_dataset,
                                     batch_size=config['default'].getint('batch_size'),
                                     shuffle=False,
-                                    num_workers=16,
+                                    num_workers=config['default'].getint('preprocess_workers'),
                                     pin_memory=True)
 
     return [train_dataloader, val_dataloader if config['default'].get('validation') else None]
